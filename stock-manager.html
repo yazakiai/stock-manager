@@ -8,13 +8,16 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
     <script src="https://unpkg.com/dexie/dist/dexie.js"></script>
     <style>
-        body { background-color: #F2F2F7; font-family: -apple-system, sans-serif; -webkit-tap-highlight-color: transparent; }
+        body { background-color: #F2F2F7; font-family: -apple-system, sans-serif; -webkit-tap-highlight-color: transparent; overflow-x: hidden; }
         .hide-scrollbar::-webkit-scrollbar { display: none; }
         .filter-btn-active { background-color: #000 !important; color: #fff !important; border-color: #000 !important; }
         .filter-btn-inactive { background-color: #fff !important; color: #4b5563 !important; border-color: #d1d5db !important; }
         .slide-up { animation: slideUp 0.3s ease-out; }
         @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
         .ios-card:active { transform: scale(0.98); opacity: 0.9; }
+        
+        /* スワイプ感向上のためのスタイル */
+        #itemList { min-height: 60vh; touch-action: pan-y; }
     </style>
 </head>
 <body class="pb-24">
@@ -28,7 +31,7 @@
             <button onclick="setFilter('麺類', this)" class="filter-btn-inactive flex-none px-4 py-2 rounded-full border text-sm font-medium transition-all">麺類</button>
             <button onclick="setFilter('缶詰', this)" class="filter-btn-inactive flex-none px-4 py-2 rounded-full border text-sm font-medium transition-all">缶詰</button>
             <button onclick="setFilter('レトルト', this)" class="filter-btn-inactive flex-none px-4 py-2 rounded-full border text-sm font-medium transition-all">レトルト</button>
-            <button onclick="setFilter('調味料', this)" class="filter-btn-inactive flex-none px-4 py-2 rounded-full border text-sm font-medium transition-all">無印</button>
+            <button onclick="setFilter('無印', this)" class="filter-btn-inactive flex-none px-4 py-2 rounded-full border text-sm font-medium transition-all">無印</button>
         </div>
     </header>
 
@@ -57,14 +60,15 @@
                 <button onclick="closeModal()" class="text-blue-600 font-semibold text-lg">キャンセル</button>
             </div>
             <div class="space-y-5">
-                <label class="w-full h-48 bg-gray-100 rounded-3xl border-2 border-dashed border-gray-300 flex flex-col items-center justify-center cursor-pointer overflow-hidden relative">
+                <label class="w-full aspect-square bg-gray-100 rounded-3xl border-2 border-dashed border-gray-300 flex flex-col items-center justify-center cursor-pointer overflow-hidden relative">
                     <img id="preview" class="absolute inset-0 w-full h-full object-cover hidden">
-                    <div id="uploadPlaceholder" class="flex flex-col items-center">
-                        <i class="bi bi-camera-fill text-4xl text-gray-400"></i>
-                        <span class="text-gray-400 text-sm mt-2 text-center">写真を撮影<br>(端末内のみ保存)</span>
+                    <div id="uploadPlaceholder" class="flex flex-col items-center px-4">
+                        <i class="bi bi-camera-fill text-5xl text-gray-400"></i>
+                        <span class="text-gray-400 text-sm mt-3 text-center font-medium">写真を撮影<br>(端末内のみ保存)</span>
                     </div>
                     <input type="file" accept="image/*" capture="environment" class="hidden" id="photoInput" onchange="previewImage(this)">
                 </label>
+                
                 <div>
                     <label class="block text-sm font-bold text-gray-700 mb-1 ml-1">商品名</label>
                     <input type="text" id="itemName" class="w-full p-4 bg-gray-100 rounded-2xl outline-none focus:bg-white focus:ring-2 focus:ring-blue-500">
@@ -73,7 +77,7 @@
                     <div>
                         <label class="block text-sm font-bold text-gray-700 mb-1 ml-1">カテゴリ</label>
                         <select id="itemCategory" class="w-full p-4 bg-gray-100 rounded-2xl outline-none appearance-none">
-                            <option>麺類</option><option>缶詰</option><option>レトルト</option><option>調味料</option><option>その他</option>
+                            <option>麺類</option><option>缶詰</option><option>レトルト</option><option>無印</option><option>その他</option>
                         </select>
                     </div>
                     <div>
@@ -103,14 +107,15 @@
         const app = initializeApp(firebaseConfig);
         const db = getDatabase(app);
         const dbRef = ref(db, 'inventory');
-        
-        // Dexieの設定 (バイナリデータを扱うためそのままの構造)
         const localDB = new Dexie("PhotoDatabase");
         localDB.version(1).stores({ photos: 'id' });
 
         let allItems = [];
         let currentFilter = 'all';
         let editingId = null;
+
+        // カテゴリの配列（スワイプ用）
+        const categoryList = ['all', 'month', 'week', '麺類', '缶詰', 'レトルト', '無印'];
 
         // --- フィルタ切り替え ---
         window.setFilter = (type, btnElement) => {
@@ -120,11 +125,42 @@
                 btn.classList.remove('filter-btn-active');
                 btn.classList.add('filter-btn-inactive');
             });
-            btnElement.classList.replace('filter-btn-inactive', 'filter-btn-active');
+            if(btnElement) {
+                btnElement.classList.replace('filter-btn-inactive', 'filter-btn-active');
+                btnElement.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+            }
             window.renderList();
         };
 
-        // --- 保存/更新ロジック (ArrayBuffer変換を追加) ---
+        // --- スワイプ検知ロジック ---
+        let touchstartX = 0;
+        let touchendX = 0;
+
+        function handleGesture() {
+            const currentIndex = categoryList.indexOf(currentFilter);
+            const threshold = 60; // スワイプと判定するピクセル距離
+
+            if (touchendX < touchstartX - threshold) { // 左スワイプ -> 次のカテゴリへ
+                if (currentIndex < categoryList.length - 1) {
+                    const nextType = categoryList[currentIndex + 1];
+                    const nextBtn = document.querySelectorAll('#filterContainer button')[currentIndex + 1];
+                    window.setFilter(nextType, nextBtn);
+                }
+            }
+            if (touchendX > touchstartX + threshold) { // 右スワイプ -> 前のカテゴリへ
+                if (currentIndex > 0) {
+                    const prevType = categoryList[currentIndex - 1];
+                    const prevBtn = document.querySelectorAll('#filterContainer button')[currentIndex - 1];
+                    window.setFilter(prevType, prevBtn);
+                }
+            }
+        }
+
+        const listElement = document.getElementById('itemList');
+        listElement.addEventListener('touchstart', e => { touchstartX = e.changedTouches[0].screenX; }, {passive: true});
+        listElement.addEventListener('touchend', e => { touchendX = e.changedTouches[0].screenX; handleGesture(); }, {passive: true});
+
+        // --- 保存処理 (ArrayBuffer変換) ---
         document.getElementById('saveBtn').onclick = async () => {
             const name = document.getElementById('itemName').value;
             const category = document.getElementById('itemCategory').value;
@@ -142,32 +178,20 @@
                 let targetRef = editingId ? ref(db, `inventory/${editingId}`) : push(dbRef);
                 if(!editingId) targetId = targetRef.key;
 
-                // 1. Firebase保存
                 await set(targetRef, { name, category, expiryDate: date, updatedAt: Date.now() });
 
-                // 2. 写真保存 (Safariエラー対策: ArrayBufferに変換)
                 if (photoFile) {
                     const resizedBlob = await resizeImage(photoFile);
                     const arrayBuffer = await resizedBlob.arrayBuffer();
-                    await localDB.photos.put({ 
-                        id: targetId, 
-                        data: arrayBuffer, 
-                        type: resizedBlob.type 
-                    });
+                    await localDB.photos.put({ id: targetId, data: arrayBuffer, type: resizedBlob.type });
                 }
-
                 closeModal();
                 resetForm();
-            } catch (e) { 
-                console.error(e);
-                alert("保存エラー: " + e.message); 
-            } finally { 
-                btn.disabled = false; 
-                btn.innerText = editingId ? "更新する" : "登録する"; 
-            }
+            } catch (e) { alert("保存エラー: " + e.message); }
+            finally { btn.disabled = false; btn.innerText = editingId ? "更新する" : "登録する"; }
         };
 
-        // --- リスト描画 (画像復元ロジックを追加) ---
+        // --- リスト描画 ---
         window.renderList = async () => {
             const container = document.getElementById('itemList');
             container.innerHTML = '';
@@ -189,7 +213,6 @@
                 const diffDays = Math.ceil((new Date(item.expiryDate) - now) / 86400000);
                 const color = diffDays <= 7 ? "text-red-500" : diffDays <= 30 ? "text-orange-500" : "text-gray-500";
                 
-                // 画像をIndexedDBから復元
                 let photoUrl = null;
                 const photoRecord = await localDB.photos.get(item.id);
                 if(photoRecord) {
@@ -217,7 +240,6 @@
             }
         };
 
-        // --- アクション制御 ---
         window.openActionSheet = (id) => {
             const item = allItems.find(i => i.id === id);
             editingId = id;
@@ -256,7 +278,6 @@
     </script>
 
     <script>
-        // UI制御用 (HTML属性から呼び出す関数)
         function openAddModal() {
             window.setEditingId(null);
             document.getElementById('modalTitle').innerText = "新規登録";
