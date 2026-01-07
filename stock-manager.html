@@ -15,9 +15,6 @@
         .slide-up { animation: slideUp 0.3s ease-out; }
         @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
         .ios-card:active { transform: scale(0.98); opacity: 0.9; }
-        
-        /* スワイプ感向上のためのスタイル */
-        #itemList { min-height: 60vh; touch-action: pan-y; }
     </style>
 </head>
 <body class="pb-24">
@@ -71,7 +68,7 @@
                 
                 <div>
                     <label class="block text-sm font-bold text-gray-700 mb-1 ml-1">商品名</label>
-                    <input type="text" id="itemName" class="w-full p-4 bg-gray-100 rounded-2xl outline-none focus:bg-white focus:ring-2 focus:ring-blue-500">
+                    <input type="text" id="itemName" class="w-full p-4 bg-gray-100 rounded-2xl outline-none focus:bg-white focus:ring-2 focus:ring-blue-500 transition-all">
                 </div>
                 <div class="grid grid-cols-2 gap-4">
                     <div>
@@ -94,6 +91,7 @@
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
         import { getDatabase, ref, push, set, onValue, remove } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
 
+        // --- Firebase 設定 ---
         const firebaseConfig = {
             apiKey: "AIzaSyDDik9cuF4s45f28qmBFBONuvrCRjJDRTE",
             authDomain: "koukou-e3c67.firebaseapp.com",
@@ -103,7 +101,6 @@
             messagingSenderId: "343214005356",
             appId: "1:343214005356:web:a33519528d3960c702cc49"
         };
-
         const app = initializeApp(firebaseConfig);
         const db = getDatabase(app);
         const dbRef = ref(db, 'inventory');
@@ -113,9 +110,6 @@
         let allItems = [];
         let currentFilter = 'all';
         let editingId = null;
-
-        // カテゴリの配列（スワイプ用）
-        const categoryList = ['all', 'month', 'week', '麺類', '缶詰', 'レトルト', '無印'];
 
         // --- フィルタ切り替え ---
         window.setFilter = (type, btnElement) => {
@@ -132,35 +126,7 @@
             window.renderList();
         };
 
-        // --- スワイプ検知ロジック ---
-        let touchstartX = 0;
-        let touchendX = 0;
-
-        function handleGesture() {
-            const currentIndex = categoryList.indexOf(currentFilter);
-            const threshold = 60; // スワイプと判定するピクセル距離
-
-            if (touchendX < touchstartX - threshold) { // 左スワイプ -> 次のカテゴリへ
-                if (currentIndex < categoryList.length - 1) {
-                    const nextType = categoryList[currentIndex + 1];
-                    const nextBtn = document.querySelectorAll('#filterContainer button')[currentIndex + 1];
-                    window.setFilter(nextType, nextBtn);
-                }
-            }
-            if (touchendX > touchstartX + threshold) { // 右スワイプ -> 前のカテゴリへ
-                if (currentIndex > 0) {
-                    const prevType = categoryList[currentIndex - 1];
-                    const prevBtn = document.querySelectorAll('#filterContainer button')[currentIndex - 1];
-                    window.setFilter(prevType, prevBtn);
-                }
-            }
-        }
-
-        const listElement = document.getElementById('itemList');
-        listElement.addEventListener('touchstart', e => { touchstartX = e.changedTouches[0].screenX; }, {passive: true});
-        listElement.addEventListener('touchend', e => { touchendX = e.changedTouches[0].screenX; handleGesture(); }, {passive: true});
-
-        // --- 保存処理 (ArrayBuffer変換) ---
+        // --- 保存/更新処理 ---
         document.getElementById('saveBtn').onclick = async () => {
             const name = document.getElementById('itemName').value;
             const category = document.getElementById('itemCategory').value;
@@ -185,9 +151,10 @@
                     const arrayBuffer = await resizedBlob.arrayBuffer();
                     await localDB.photos.put({ id: targetId, data: arrayBuffer, type: resizedBlob.type });
                 }
+
                 closeModal();
                 resetForm();
-            } catch (e) { alert("保存エラー: " + e.message); }
+            } catch (e) { alert("エラー: " + e.message); }
             finally { btn.disabled = false; btn.innerText = editingId ? "更新する" : "登録する"; }
         };
 
@@ -240,6 +207,7 @@
             }
         };
 
+        // --- アクション制御 ---
         window.openActionSheet = (id) => {
             const item = allItems.find(i => i.id === id);
             editingId = id;
