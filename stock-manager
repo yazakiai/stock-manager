@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>在庫管理 - 完全版</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    <script src="https://unpkg.com/dexie/dist/dexie.js"></script>
+    <style>
+        body { background-color: #F2F2F7; font-family: -apple-system, sans-serif; -webkit-tap-highlight-color: transparent; }
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
+        .filter-btn-active { background-color: #000 !important; color: #fff !important; border-color: #000 !important; }
+        .filter-btn-inactive { background-color: #fff !important; color: #4b5563 !important; border-color: #d1d5db !important; }
+        .slide-up { animation: slideUp 0.3s ease-out; }
+        @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+        .ios-card:active { transform: scale(0.98); opacity: 0.9; }
+    </style>
+</head>
+<body class="pb-24">
+
+    <header class="sticky top-0 bg-white/80 backdrop-blur-md z-10 pt-10 pb-4 px-5 border-b border-gray-200">
+        <h1 class="text-3xl font-bold text-gray-900">在庫リスト</h1>
+        <div class="flex overflow-x-auto gap-2 mt-4 hide-scrollbar" id="filterContainer">
+            <button onclick="setFilter('all', this)" class="filter-btn-active flex-none px-4 py-2 rounded-full border text-sm font-medium transition-all">すべて</button>
+            <button onclick="setFilter('month', this)" class="filter-btn-inactive flex-none px-4 py-2 rounded-full border text-sm font-medium transition-all text-orange-600">あと1ヶ月</button>
+            <button onclick="setFilter('week', this)" class="filter-btn-inactive flex-none px-4 py-2 rounded-full border text-sm font-medium transition-all text-red-600">あと1週間</button>
+            <button onclick="setFilter('麺類', this)" class="filter-btn-inactive flex-none px-4 py-2 rounded-full border text-sm font-medium transition-all">麺類</button>
+            <button onclick="setFilter('缶詰', this)" class="filter-btn-inactive flex-none px-4 py-2 rounded-full border text-sm font-medium transition-all">缶詰</button>
+            <button onclick="setFilter('レトルト', this)" class="filter-btn-inactive flex-none px-4 py-2 rounded-full border text-sm font-medium transition-all">レトルト</button>
+            <button onclick="setFilter('調味料', this)" class="filter-btn-inactive flex-none px-4 py-2 rounded-full border text-sm font-medium transition-all">調味料</button>
+        </div>
+    </header>
+
+    <main id="itemList" class="p-4 space-y-3">
+        <p class="text-center text-gray-400 py-10">読み込み中...</p>
+    </main>
+
+    <button onclick="openAddModal()" class="fixed bottom-8 right-6 w-16 h-16 bg-blue-600 text-white rounded-full shadow-xl flex items-center justify-center text-3xl z-20">
+        <i class="bi bi-plus-lg"></i>
+    </button>
+
+    <div id="actionSheet" class="fixed inset-0 bg-black/40 z-40 hidden flex items-end">
+        <div class="w-full px-4 pb-10 slide-up">
+            <div class="bg-white/90 backdrop-blur-xl rounded-2xl overflow-hidden mb-2">
+                <button id="editBtnAction" class="w-full py-4 text-blue-600 border-b border-gray-200 text-lg font-medium active:bg-gray-200">編集する</button>
+                <button id="deleteBtnAction" class="w-full py-4 text-red-600 text-lg font-medium active:bg-gray-200">削除する</button>
+            </div>
+            <button onclick="closeActionSheet()" class="w-full py-4 bg-white rounded-2xl text-blue-600 text-lg font-bold active:bg-gray-200">キャンセル</button>
+        </div>
+    </div>
+
+    <div id="modal" class="fixed inset-0 bg-black/50 z-50 hidden flex items-end">
+        <div class="bg-white w-full rounded-t-[30px] p-6 max-h-[92vh] overflow-y-auto slide-up">
+            <div class="flex justify-between items-center mb-6">
+                <h2 id="modalTitle" class="text-xl font-bold">新規登録</h2>
+                <button onclick="closeModal()" class="text-blue-600 font-semibold text-lg">キャンセル</button>
+            </div>
+            <div class="space-y-5">
+                <label class="w-full h-48 bg-gray-100 rounded-3xl border-2 border-dashed border-gray-300 flex flex-col items-center justify-center cursor-pointer overflow-hidden relative">
+                    <img id="preview" class="absolute inset-0 w-full h-full object-cover hidden">
+                    <div id="uploadPlaceholder" class="flex flex-col items-center">
+                        <i class="bi bi-camera-fill text-4xl text-gray-400"></i>
+                        <span class="text-gray-400 text-sm mt-2 text-center">写真を撮影<br>(端末内のみ保存)</span>
+                    </div>
+                    <input type="file" accept="image/*" capture="environment" class="hidden" id="photoInput" onchange="previewImage(this)">
+                </label>
+                <div>
+                    <label class="block text-sm font-bold text-gray-700 mb-1 ml-1">商品名</label>
+                    <input type="text" id="itemName" class="w-full p-4 bg-gray-100 rounded-2xl outline-none focus:bg-white focus:ring-2 focus:ring-blue-500">
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-bold text-gray-700 mb-1 ml-1">カテゴリ</label>
+                        <select id="itemCategory" class="w-full p-4 bg-gray-100 rounded-2xl outline-none appearance-none">
+                            <option>麺類</option><option>缶詰</option><option>レトルト</option><option>調味料</option><option>その他</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-bold text-gray-700 mb-1 ml-1">賞味期限</label>
+                        <input type="date" id="expiryDate" class="w-full p-4 bg-gray-100 rounded-2xl outline-none">
+                    </div>
+                </div>
+                <button id="saveBtn" class="w-full py-4 bg-blue-600 text-white rounded-2xl font-bold text-lg shadow-lg">登録する</button>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+        import { getDatabase, ref, push, set, onValue, remove } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
+
+        // --- Firebase 設定 ---
+        const firebaseConfig = {
+            apiKey: "AIzaSyDDik9cuF4s45f28qmBFBONuvrCRjJDRTE",
+            authDomain: "koukou-e3c67.firebaseapp.com",
+            databaseURL: "https://koukou-e3c67-default-rtdb.firebaseio.com",
+            projectId: "koukou-e3c67",
+            storageBucket: "koukou-e3c67.firebasestorage.app",
+            messagingSenderId: "343214005356",
+            appId: "1:343214005356:web:a33519528d3960c702cc49"
+        };
+        const app = initializeApp(firebaseConfig);
+        const db = getDatabase(app);
+        const dbRef = ref(db, 'inventory');
+        const localDB = new Dexie("PhotoDatabase");
+        localDB.version(1).stores({ photos: 'id' });
+
+        let allItems = [];
+        let currentFilter = 'all';
+        let editingId = null;
+
+        // --- フィルタ機能の公開 ---
+        window.setFilter = (type, btnElement) => {
+            currentFilter = type;
+            const buttons = document.querySelectorAll('#filterContainer button');
+            buttons.forEach(btn => {
+                btn.classList.remove('filter-btn-active');
+                btn.classList.add('filter-btn-inactive');
+            });
+            btnElement.classList.remove('filter-btn-inactive');
+            btnElement.classList.add('filter-btn-active');
+            window.renderList();
+        };
+
+        // --- 保存/更新ロジック ---
+        document.getElementById('saveBtn').onclick = async () => {
+            const name = document.getElementById('itemName').value;
+            const category = document.getElementById('itemCategory').value;
+            const date = document.getElementById('expiryDate').value;
+            const photoFile = document.getElementById('photoInput').files[0];
+
+            if(!name || !date) return alert('商品名と期限を入力してください');
+
+            const btn = document.getElementById('saveBtn');
+            btn.disabled = true;
+            btn.innerText = "保存中...";
+
+            try {
+                let targetId = editingId;
+                let targetRef = editingId ? ref(db, `inventory/${editingId}`) : push(dbRef);
+                if(!editingId) targetId = targetRef.key;
+
+                await set(targetRef, { name, category, expiryDate: date, updatedAt: Date.now() });
+
+                if (photoFile) {
+                    const resizedBlob = await resizeImage(photoFile);
+                    await localDB.photos.put({ id: targetId, blob: resizedBlob });
+                }
+
+                closeModal();
+                resetForm();
+            } catch (e) { alert("エラー: " + e.message); }
+            finally { btn.disabled = false; btn.innerText = editingId ? "更新する" : "登録する"; }
+        };
+
+        // --- リスト描画 ---
+        window.renderList = async () => {
+            const container = document.getElementById('itemList');
+            container.innerHTML = '';
+            const now = new Date();
+            now.setHours(0,0,0,0);
+
+            let displayItems = allItems.filter(item => {
+                const itemDate = new Date(item.expiryDate);
+                const diffDays = Math.ceil((itemDate - now) / 86400000);
+                if (currentFilter === 'all') return true;
+                if (currentFilter === 'month') return diffDays <= 30;
+                if (currentFilter === 'week') return diffDays <= 7;
+                return item.category === currentFilter;
+            });
+
+            displayItems.sort((a, b) => new Date(a.expiryDate) - new Date(b.expiryDate));
+
+            for (const item of displayItems) {
+                const diffDays = Math.ceil((new Date(item.expiryDate) - now) / 86400000);
+                const color = diffDays <= 7 ? "text-red-500" : diffDays <= 30 ? "text-orange-500" : "text-gray-500";
+                
+                const photoData = await localDB.photos.get(item.id);
+                const photoUrl = photoData ? URL.createObjectURL(photoData.blob) : null;
+
+                const card = document.createElement('div');
+                card.className = "bg-white p-4 rounded-3xl shadow-sm flex items-center ios-card";
+                card.innerHTML = `
+                    <div class="w-20 h-20 bg-gray-100 rounded-2xl mr-4 flex-none overflow-hidden flex items-center justify-center">
+                        ${photoUrl ? `<img src="${photoUrl}" class="w-full h-full object-cover">` : `<i class="bi bi-camera text-gray-300 text-2xl"></i>`}
+                    </div>
+                    <div class="flex-1 min-w-0">
+                        <h3 class="font-bold text-lg truncate text-gray-800">${item.name}</h3>
+                        <p class="text-gray-400 text-xs font-medium uppercase">${item.category}</p>
+                        <p class="text-xs ${color} font-bold mt-1">${item.expiryDate.replace(/-/g, '/')} まで</p>
+                    </div>
+                    <div class="text-right ml-2 flex flex-col items-center">
+                        <button onclick="openActionSheet('${item.id}')" class="p-2 -mr-2 text-gray-300"><i class="bi bi-three-dots text-xl"></i></button>
+                        <div class="mt-auto"><div class="text-lg font-black ${color}">${diffDays}日</div></div>
+                    </div>
+                `;
+                container.appendChild(card);
+            }
+        };
+
+        // --- アクションシート制御 ---
+        window.openActionSheet = (id) => {
+            const item = allItems.find(i => i.id === id);
+            editingId = id;
+            document.getElementById('actionSheet').classList.remove('hidden');
+            document.getElementById('editBtnAction').onclick = () => { closeActionSheet(); openEditModal(item); };
+            document.getElementById('deleteBtnAction').onclick = async () => {
+                if(confirm("削除しますか？")) {
+                    await remove(ref(db, `inventory/${id}`));
+                    await localDB.photos.delete(id);
+                    closeActionSheet();
+                }
+            };
+        };
+
+        async function resizeImage(file) {
+            return new Promise((res) => {
+                const img = new Image();
+                img.src = URL.createObjectURL(file);
+                img.onload = () => {
+                    const canvas = document.createElement('canvas');
+                    const scale = 800 / img.width;
+                    canvas.width = 800; canvas.height = img.height * scale;
+                    canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+                    canvas.toBlob(res, 'image/jpeg', 0.7);
+                };
+            });
+        }
+
+        onValue(dbRef, (snapshot) => {
+            const data = snapshot.val();
+            allItems = data ? Object.keys(data).map(key => ({ id: key, ...data[key] })) : [];
+            window.renderList();
+        });
+
+        // グローバルに編集用IDを共有するための処理
+        window.getEditingId = () => editingId;
+        window.setEditingId = (val) => editingId = val;
+    </script>
+
+    <script>
+        // --- UI 操作用 (共通) ---
+        function openAddModal() {
+            window.setEditingId(null);
+            document.getElementById('modalTitle').innerText = "新規登録";
+            document.getElementById('saveBtn').innerText = "登録する";
+            resetForm();
+            document.getElementById('modal').classList.remove('hidden');
+        }
+
+        function openEditModal(item) {
+            document.getElementById('modalTitle').innerText = "情報を編集";
+            document.getElementById('saveBtn').innerText = "更新する";
+            document.getElementById('itemName').value = item.name;
+            document.getElementById('itemCategory').value = item.category;
+            document.getElementById('expiryDate').value = item.expiryDate;
+            document.getElementById('modal').classList.remove('hidden');
+        }
+
+        function closeModal() { document.getElementById('modal').classList.add('hidden'); }
+        function closeActionSheet() { document.getElementById('actionSheet').classList.add('hidden'); }
+
+        function previewImage(input) {
+            if (input.files && input.files[0]) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    document.getElementById('preview').src = e.target.result;
+                    document.getElementById('preview').classList.remove('hidden');
+                    document.getElementById('uploadPlaceholder').classList.add('hidden');
+                };
+                reader.readAsDataURL(input.files[0]);
+            }
+        }
+
+        function resetForm() {
+            document.getElementById('itemName').value = '';
+            document.getElementById('expiryDate').value = '';
+            document.getElementById('photoInput').value = '';
+            document.getElementById('preview').classList.add('hidden');
+            document.getElementById('uploadPlaceholder').classList.remove('hidden');
+        }
+    </script>
+</body>
+</html>
