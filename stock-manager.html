@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>在庫管理 - 完全版</title>
+    <title>在庫管理 - プロ版</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
     <script src="https://unpkg.com/dexie/dist/dexie.js"></script>
@@ -28,7 +28,7 @@
             <button onclick="setFilter('麺類', this)" class="filter-btn-inactive flex-none px-4 py-2 rounded-full border text-sm font-medium transition-all">麺類</button>
             <button onclick="setFilter('缶詰', this)" class="filter-btn-inactive flex-none px-4 py-2 rounded-full border text-sm font-medium transition-all">缶詰</button>
             <button onclick="setFilter('レトルト', this)" class="filter-btn-inactive flex-none px-4 py-2 rounded-full border text-sm font-medium transition-all">レトルト</button>
-            <button onclick="setFilter('調味料', this)" class="filter-btn-inactive flex-none px-4 py-2 rounded-full border text-sm font-medium transition-all">調味料</button>
+            <button onclick="setFilter('調味料', this)" class="filter-btn-inactive flex-none px-4 py-2 rounded-full border text-sm font-medium transition-all">無印</button>
         </div>
     </header>
 
@@ -90,7 +90,6 @@
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
         import { getDatabase, ref, push, set, onValue, remove } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
 
-        // --- Firebase 設定 ---
         const firebaseConfig = {
             apiKey: "AIzaSyDDik9cuF4s45f28qmBFBONuvrCRjJDRTE",
             authDomain: "koukou-e3c67.firebaseapp.com",
@@ -100,9 +99,12 @@
             messagingSenderId: "343214005356",
             appId: "1:343214005356:web:a33519528d3960c702cc49"
         };
+
         const app = initializeApp(firebaseConfig);
         const db = getDatabase(app);
         const dbRef = ref(db, 'inventory');
+        
+        // Dexieの設定 (バイナリデータを扱うためそのままの構造)
         const localDB = new Dexie("PhotoDatabase");
         localDB.version(1).stores({ photos: 'id' });
 
@@ -110,7 +112,7 @@
         let currentFilter = 'all';
         let editingId = null;
 
-        // --- フィルタ機能の公開 ---
+        // --- フィルタ切り替え ---
         window.setFilter = (type, btnElement) => {
             currentFilter = type;
             const buttons = document.querySelectorAll('#filterContainer button');
@@ -118,12 +120,11 @@
                 btn.classList.remove('filter-btn-active');
                 btn.classList.add('filter-btn-inactive');
             });
-            btnElement.classList.remove('filter-btn-inactive');
-            btnElement.classList.add('filter-btn-active');
+            btnElement.classList.replace('filter-btn-inactive', 'filter-btn-active');
             window.renderList();
         };
 
-        // --- 保存/更新ロジック ---
+        // --- 保存/更新ロジック (ArrayBuffer変換を追加) ---
         document.getElementById('saveBtn').onclick = async () => {
             const name = document.getElementById('itemName').value;
             const category = document.getElementById('itemCategory').value;
@@ -141,20 +142,32 @@
                 let targetRef = editingId ? ref(db, `inventory/${editingId}`) : push(dbRef);
                 if(!editingId) targetId = targetRef.key;
 
+                // 1. Firebase保存
                 await set(targetRef, { name, category, expiryDate: date, updatedAt: Date.now() });
 
+                // 2. 写真保存 (Safariエラー対策: ArrayBufferに変換)
                 if (photoFile) {
                     const resizedBlob = await resizeImage(photoFile);
-                    await localDB.photos.put({ id: targetId, blob: resizedBlob });
+                    const arrayBuffer = await resizedBlob.arrayBuffer();
+                    await localDB.photos.put({ 
+                        id: targetId, 
+                        data: arrayBuffer, 
+                        type: resizedBlob.type 
+                    });
                 }
 
                 closeModal();
                 resetForm();
-            } catch (e) { alert("エラー: " + e.message); }
-            finally { btn.disabled = false; btn.innerText = editingId ? "更新する" : "登録する"; }
+            } catch (e) { 
+                console.error(e);
+                alert("保存エラー: " + e.message); 
+            } finally { 
+                btn.disabled = false; 
+                btn.innerText = editingId ? "更新する" : "登録する"; 
+            }
         };
 
-        // --- リスト描画 ---
+        // --- リスト描画 (画像復元ロジックを追加) ---
         window.renderList = async () => {
             const container = document.getElementById('itemList');
             container.innerHTML = '';
@@ -176,8 +189,13 @@
                 const diffDays = Math.ceil((new Date(item.expiryDate) - now) / 86400000);
                 const color = diffDays <= 7 ? "text-red-500" : diffDays <= 30 ? "text-orange-500" : "text-gray-500";
                 
-                const photoData = await localDB.photos.get(item.id);
-                const photoUrl = photoData ? URL.createObjectURL(photoData.blob) : null;
+                // 画像をIndexedDBから復元
+                let photoUrl = null;
+                const photoRecord = await localDB.photos.get(item.id);
+                if(photoRecord) {
+                    const blob = new Blob([photoRecord.data], { type: photoRecord.type });
+                    photoUrl = URL.createObjectURL(blob);
+                }
 
                 const card = document.createElement('div');
                 card.className = "bg-white p-4 rounded-3xl shadow-sm flex items-center ios-card";
@@ -199,7 +217,7 @@
             }
         };
 
-        // --- アクションシート制御 ---
+        // --- アクション制御 ---
         window.openActionSheet = (id) => {
             const item = allItems.find(i => i.id === id);
             editingId = id;
@@ -234,13 +252,11 @@
             window.renderList();
         });
 
-        // グローバルに編集用IDを共有するための処理
-        window.getEditingId = () => editingId;
-        window.setEditingId = (val) => editingId = val;
+        window.setEditingId = (val) => { editingId = val; };
     </script>
 
     <script>
-        // --- UI 操作用 (共通) ---
+        // UI制御用 (HTML属性から呼び出す関数)
         function openAddModal() {
             window.setEditingId(null);
             document.getElementById('modalTitle').innerText = "新規登録";
